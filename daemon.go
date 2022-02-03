@@ -80,6 +80,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/pkg/errors"
 )
 
 // Milliseconds to wait for the next job to begin after a file change
@@ -168,6 +169,7 @@ func build() bool {
 		err := runBuildCommand(c)
 		if err != nil {
 			log.Println(failColor("Command failed: "), failColor(c))
+			log.Println(failColor(err.Error()))
 			return false
 		}
 	}
@@ -184,6 +186,10 @@ func runBuildCommand(c string) error {
 	}
 
 	cmd := exec.Command(args[0], args[1:]...)
+	if *flagVerbose {
+		log.Println("build :", cmd.Path, "; args :", cmd.Args)
+		log.Println("PATH", os.Getenv("PATH"))
+	}
 
 	if *flagBuildDir != "" {
 		cmd.Dir = *flagBuildDir
@@ -192,10 +198,12 @@ func runBuildCommand(c string) error {
 	}
 
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
-		log.Println(failColor("Error while building:\n"), failColor(string(output)))
-		return err
+		msg := cmd.ProcessState.String()
+		if len(output) > 0 {
+			msg = msg + "\n" + string(output)
+		}
+		return errors.WithMessage(err, msg)
 	}
 	return nil
 }
