@@ -292,7 +292,7 @@ func startCommand(command string) (cmd *exec.Cmd, stdout io.ReadCloser, stderr i
 
 // Run the command in the given string and restart it after
 // a message was received on the buildDone channel.
-func runner(commandTemplate string, buildStarted <-chan string, buildSuccess <-chan bool) {
+func runner(commandTemplate string, buildStartedCh <-chan string, buildSuccess <-chan bool) {
 	var currentProcess *os.Process
 	pipeChan := make(chan io.ReadCloser)
 
@@ -313,27 +313,41 @@ func runner(commandTemplate string, buildStarted <-chan string, buildSuccess <-c
 		os.Exit(0)
 	}()
 
+	// So we can wait see when the process exits
+	processExitedCh := make(chan bool, 1)
+
 	for {
-		eventPath := <-buildStarted
+		eventPath := ""
+		buildStarted := false
+
+		select {
+		case eventPath = <-buildStartedCh:
+			buildStarted = true
+		case <-processExitedCh:
+			log.Println("waiting 5 seconds until restarting")
+			time.Sleep(5 * time.Second)
+		}
 
 		// prepend %0.s (which adds nothing) to prevent warning about missing
 		// format specifier if the user did not supply one.
 		command := fmt.Sprintf("%0.s"+commandTemplate, eventPath)
 
-		if !*flagCommandStop {
-			if !<-buildSuccess {
-				continue
+		if buildStarted {
+			if !*flagCommandStop {
+				if !<-buildSuccess {
+					continue
+				}
 			}
-		}
 
-		if currentProcess != nil {
-			killProcess(currentProcess)
-		}
+			if currentProcess != nil {
+				killProcess(currentProcess)
+			}
 
-		if *flagCommandStop {
-			log.Println(okColor("Command stopped. Waiting for build to complete."))
-			if !<-buildSuccess {
-				continue
+			if *flagCommandStop {
+				log.Println(okColor("Command stopped. Waiting for build to complete."))
+				if !<-buildSuccess {
+					continue
+				}
 			}
 		}
 
@@ -348,6 +362,18 @@ func runner(commandTemplate string, buildStarted <-chan string, buildSuccess <-c
 		pipeChan <- stderrPipe
 
 		currentProcess = cmd.Process
+
+		go func() {
+			ps, err := currentProcess.Wait()
+			if err != nil {
+				log.Println("process.Wait() failed with:", err)
+			}
+
+			if ps != nil {
+				log.Println("Command exited with ", ps.String())
+				processExitedCh <- true
+			}
+		}()
 	}
 }
 
@@ -367,7 +393,11 @@ func killProcessHard(process *os.Process) {
 	}
 
 	if _, err := process.Wait(); err != nil {
-		log.Fatal(failColor("Could not wait for child process. Aborting due to danger of infinite forks."))
+		if strings.Contains(err.Error(), "no child processes") {
+			return
+		}
+
+		log.Fatal(failColor("Could not wait for child process. Aborting due to danger of infinite forks: " + err.Error()))
 	}
 }
 
