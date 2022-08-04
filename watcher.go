@@ -15,7 +15,7 @@ import (
 )
 
 func directoryShouldBeTracked(cfg *WatcherConfig, path string) bool {
-	return cfg.flagRecursive == true && !cfg.flagExcludedDirs.Matches(path)
+	return cfg.flagRecursive && !cfg.flagExcludedDirs.Matches(path)
 }
 
 func pathMatches(cfg *WatcherConfig, path string) bool {
@@ -64,7 +64,7 @@ func (n NotifyWatcher) Watch(jobs chan<- string) {
 			if ev.Op&fsnotify.Remove == fsnotify.Remove || ev.Op&fsnotify.Write == fsnotify.Write || ev.Op&fsnotify.Create == fsnotify.Create {
 				// Assume it is a directory and track it.
 				if directoryShouldBeTracked(n.cfg, ev.Name) {
-					n.watcher.Add(ev.Name)
+					_ = n.watcher.Add(ev.Name)
 				}
 				if pathMatches(n.cfg, ev.Name) {
 					jobs <- ev.Name
@@ -171,7 +171,7 @@ func NewWatcher(cfg *WatcherConfig) (FileWatcher, error) {
 func addFiles(fw FileWatcher) error {
 	cfg := fw.getConfig()
 	for _, flagDirectory := range cfg.flagDirectories {
-		if cfg.flagRecursive == true {
+		if cfg.flagRecursive {
 			err := filepath.WalkDir(flagDirectory, func(path string, entry os.DirEntry, err error) error {
 				if err == nil && entry.IsDir() {
 					if cfg.flagExcludedDirs.Matches(path) {
